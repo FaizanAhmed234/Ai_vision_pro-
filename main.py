@@ -29,17 +29,21 @@ def load_model():
 
 
 
+
 class YOLOVideoProcessor:
     def __init__(self, confidence=0.45):
         self.confidence = confidence
         self.last_inference = 0.0
         self.last_output = None
-        self.interval = 0.35
+        self.interval = 0.4
         self.model = load_model()
 
     def recv(self, frame):
         image = frame.to_ndarray(format="bgr24")
         original_height, original_width = image.shape[:2]
+
+        # Keep a copy of the original camera frame
+        original = image.copy()
 
         now = time.monotonic()
 
@@ -47,49 +51,60 @@ class YOLOVideoProcessor:
             self.last_inference = now
 
             try:
-                # Resize while preserving the camera's aspect ratio
-                max_width = 640
-                if original_width > max_width:
-                    new_height = int(
-                        original_height * max_width / original_width
-                    )
-                    image = cv2.resize(
-                        image,
-                        (max_width, new_height),
-                        interpolation=cv2.INTER_AREA
-                    )
+                # Resize for faster inference while preserving aspect ratio
+                max_dimension = 640
+                scale = min(
+                    max_dimension / original_width,
+                    max_dimension / original_height,
+                    1.0
+                )
+
+                infer_width = max(1, int(original_width * scale))
+                infer_height = max(1, int(original_height * scale))
+
+                inference_image = cv2.resize(
+                    original,
+                    (infer_width, infer_height),
+                    interpolation=cv2.INTER_AREA
+                )
 
                 with MODEL_LOCK:
                     result = self.model.predict(
-                        image,
+                        inference_image,
                         imgsz=416,
                         conf=self.confidence,
                         device="cpu",
                         verbose=False
                     )[0]
 
-                self.last_output = result.plot()
+                annotated = result.plot()
 
-            except Exception:
-                pass
+                # Return the annotated frame at the camera's exact dimensions
+                self.last_output = cv2.resize(
+                    annotated,
+                    (original_width, original_height),
+                    interpolation=cv2.INTER_LINEAR
+                )
 
-        # Always return a valid video frame
-        output = self.last_output
-        if output is None:
-            output = cv2.resize(
-                image,
-                (original_width, original_height)
-            )
+            except Exception as error:
+                # Show inference errors in the video instead of hiding them
+                self.last_output = original.copy()
+                cv2.putText(
+                    self.last_output,
+                    "Detection error",
+                    (20, 40),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1,
+                    (0, 0, 255),
+                    2
+                )
 
-        # Match output dimensions to the incoming camera frame
-        if output.shape[:2] != (original_height, original_width):
-            output = cv2.resize(
-                output,
-                (original_width, original_height)
-            )
+        if self.last_output is None:
+            self.last_output = original
 
         return av.VideoFrame.from_ndarray(
-            output, format="bgr24"
+            self.last_output,
+            format="bgr24"
         )
 
 
