@@ -1,8 +1,5 @@
---extra-index-url https://download.pytorch.org/whl/cpu
-streamlit>=1.38
-streamlit-webrtc>=0.60
-ultralytics>=8.3
+streamlit
+streamlit-webrtc
+ultralytics
 opencv-python-headless
 av
-torch
-torchvision
