@@ -28,34 +28,39 @@ def load_model():
     return YOLO("yolo11n.pt")
 
 
+
 class YOLOVideoProcessor:
     def __init__(self, confidence=0.45):
         self.confidence = confidence
         self.last_inference = 0.0
         self.last_output = None
-        self.interval = 0.20  # Target up to 5 detection updates/sec
+        self.interval = 0.35
+        self.model = load_model()
 
     def recv(self, frame):
         image = frame.to_ndarray(format="bgr24")
-        height, width = image.shape[:2]
-
-        # Reduce processing cost on the server
-        if width > 640:
-            new_height = int(height * 640 / width)
-            image = cv2.resize(
-                image, (640, new_height),
-                interpolation=cv2.INTER_AREA
-            )
+        original_height, original_width = image.shape[:2]
 
         now = time.monotonic()
 
-        # Reuse the previous result between inference updates
         if now - self.last_inference >= self.interval:
+            self.last_inference = now
+
             try:
-                model = load_model()
+                # Resize while preserving the camera's aspect ratio
+                max_width = 640
+                if original_width > max_width:
+                    new_height = int(
+                        original_height * max_width / original_width
+                    )
+                    image = cv2.resize(
+                        image,
+                        (max_width, new_height),
+                        interpolation=cv2.INTER_AREA
+                    )
 
                 with MODEL_LOCK:
-                    result = model.predict(
+                    result = self.model.predict(
                         image,
                         imgsz=416,
                         conf=self.confidence,
@@ -64,18 +69,27 @@ class YOLOVideoProcessor:
                     )[0]
 
                 self.last_output = result.plot()
-                self.last_inference = now
 
             except Exception:
-                # Keep the stream alive if a detection fails
-                if self.last_output is None:
-                    self.last_output = image.copy()
+                pass
 
-        if self.last_output is None:
-            self.last_output = image.copy()
+        # Always return a valid video frame
+        output = self.last_output
+        if output is None:
+            output = cv2.resize(
+                image,
+                (original_width, original_height)
+            )
+
+        # Match output dimensions to the incoming camera frame
+        if output.shape[:2] != (original_height, original_width):
+            output = cv2.resize(
+                output,
+                (original_width, original_height)
+            )
 
         return av.VideoFrame.from_ndarray(
-            self.last_output, format="bgr24"
+            output, format="bgr24"
         )
 
 
