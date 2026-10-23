@@ -40,6 +40,7 @@ class YOLOVideoProcessor:
 
     def recv(self, frame):
         image = frame.to_ndarray(format="bgr24")
+        return av.VideoFrame.from_ndarray(image, format="bgr24")
         original_height, original_width = image.shape[:2]
 
         # Keep a copy of the original camera frame
